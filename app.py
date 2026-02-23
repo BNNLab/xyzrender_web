@@ -9,7 +9,7 @@ import streamlit as st
 
 st.set_page_config(page_title="xyzrender Web Tool", page_icon="🧪", layout="centered")
 
-st.title("Xyzrender Web Tool")
+st.title("xyzrender Web Tool")
 st.write(
     "Upload a `.xyz` file and this app will run `xyzrender file.xyz [options]` to "
     "generate an **SVG** or **GIF** preview you can download."
