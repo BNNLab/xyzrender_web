@@ -1,0 +1,136 @@
+import io
+import os
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+
+import streamlit as st
+
+st.set_page_config(page_title="XYZ to SVG Renderer", page_icon="🧪", layout="centered")
+
+st.title("XYZ → SVG Renderer")
+st.write(
+    "Upload a `.xyz` file and this app will run `xyzrender file.xyz -o file.svg` "
+    "to generate an SVG preview you can download."
+)
+
+# Optional: show the version/path of xyzrender to help diagnose PATH issues
+with st.expander("Diagnostics", expanded=False):
+    xyzrender_path = shutil.which("xyzrender")
+    if xyzrender_path:
+        st.write(f"**xyzrender found at**: `{xyzrender_path}`")
+        try:
+            ver = subprocess.run(
+                ["xyzrender", "--version"],
+                capture_output=True, text=True, check=False
+            )
+            if ver.stdout.strip():
+                st.write(f"**xyzrender version**: `{ver.stdout.strip()}`")
+            elif ver.stderr.strip():
+                st.write(f"**xyzrender version (stderr)**: `{ver.stderr.strip()}`")
+        except Exception as e:
+            st.write(f"Could not query version: {e}")
+    else:
+        st.warning(
+            "⚠️ `xyzrender` not found on PATH. Ensure it is installed in this environment."
+        )
+
+uploaded = st.file_uploader("Choose a .xyz file", type=["xyz"])
+
+# Optional output name
+default_out_name = "output.svg"
+out_name = st.text_input("Output file name (SVG)", value=default_out_name)
+
+run_btn = st.button("Render", type="primary", disabled=uploaded is None)
+
+if run_btn:
+    if uploaded is None:
+        st.error("Please upload a .xyz file first.")
+        st.stop()
+
+    if not out_name.lower().endswith(".svg"):
+        st.warning("Output name does not end with .svg; appending .svg automatically.")
+        out_name = out_name + ".svg"
+
+    # Create an isolated temp dir for this run
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir_path = Path(tmpdir)
+
+        # Preserve base name (fall back if uploader lacks a name)
+        in_name = uploaded.name or "input.xyz"
+        if not in_name.lower().endswith(".xyz"):
+            # Extra guard in case MIME/type sniffing bypasses the extension filter
+            in_name = Path(in_name).stem + ".xyz"
+
+        in_path = tmpdir_path / in_name
+        out_path = tmpdir_path / out_name
+
+        # Save upload
+        in_path.write_bytes(uploaded.getvalue())
+
+        # Build command: xyzrender input.xyz -o output.svg
+        cmd = ["xyzrender", str(in_path), "-o", str(out_path)]
+
+        with st.spinner("Running xyzrender..."):
+            try:
+                proc = subprocess.run(
+                    cmd, capture_output=True, text=True, check=True
+                )
+            except subprocess.CalledProcessError as e:
+                st.error("Rendering failed.")
+                if e.stdout:
+                    st.code(e.stdout, language="bash")
+                if e.stderr:
+                    st.code(e.stderr, language="bash")
+                st.stop()
+            except FileNotFoundError:
+                st.error(
+                    "Could not find `xyzrender`. Is it installed and available on PATH in this environment?"
+                )
+                st.stop()
+            except Exception as e:
+                st.error(f"Unexpected error: {e}")
+                st.stop()
+
+        if not out_path.exists() or out_path.stat().st_size == 0:
+            st.error("`xyzrender` did not produce an SVG file.")
+            # Show any captured output to help debug
+            if proc.stdout:
+                st.code(proc.stdout, language="bash")
+            if proc.stderr:
+                st.code(proc.stderr, language="bash")
+            st.stop()
+
+        svg_bytes = out_path.read_bytes()
+        st.success("Rendering complete!")
+
+        # Display SVG preview
+        try:
+            # Streamlit supports SVG directly
+            st.image(svg_bytes, caption=out_name, use_column_width=True)
+        except Exception:
+            # Fallback: embed using HTML
+            st.markdown(
+                f'<div style="border:1px solid #ddd;border-radius:6px;padding:8px;overflow:auto;">'
+                f'{svg_bytes.decode("utf-8", errors="ignore")}'
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+        # Download button
+        st.download_button(
+            label="Download SVG",
+            data=svg_bytes,
+            file_name=out_name,
+            mime="image/svg+xml",
+        )
+
+        # Optional: show stdout/stderr for transparency
+        with st.expander("Show process output"):
+            if proc.stdout.strip():
+                st.subheader("stdout")
+                st.code(proc.stdout, language="bash")
+            if proc.stderr.strip():
+                st.subheader("stderr")
+                st.code(proc.stderr, language="bash")
